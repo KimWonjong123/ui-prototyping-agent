@@ -71,12 +71,12 @@ class GeminiClient(LLMClient):
     def generate_batch(self, prompts: list[str], system_prompt: Optional[str] = None, batch_size: int = 4) -> list[str]:
         """Generate responses for multiple prompts (sequential for Gemini API)"""
         results = []
-        for prompt in prompts:
+        for prompt in tqdm(prompts, desc="Gemini batch inference", unit="prompt"):
             try:
                 result = self.generate(prompt, system_prompt)
                 results.append(result)
             except Exception as e:
-                print(f"Warning: Gemini batch generation failed for a prompt: {e}")
+                tqdm.write(f"Warning: Gemini batch generation failed: {e}")
                 results.append("")
         return results
     
@@ -151,18 +151,13 @@ class OllamaClient(LLMClient):
             List of generated responses in the same order as input prompts
         """
         results = []
-        total = len(prompts)
         
-        for i, prompt in enumerate(prompts):
+        for prompt in tqdm(prompts, desc="Ollama batch inference", unit="prompt"):
             try:
                 result = self.generate(prompt, system_prompt)
                 results.append(result)
-                
-                # Print progress
-                if (i + 1) % batch_size == 0 or (i + 1) == total:
-                    print(f"  Progress: {i + 1}/{total} completed")
             except Exception as e:
-                print(f"Warning: Ollama batch generation failed for prompt {i}: {e}")
+                tqdm.write(f"Warning: Ollama batch generation failed: {e}")
                 results.append("")
         
         return results

@@ -293,24 +293,32 @@ class InstructionGenerator:
             if show_progress:
                 print("LLM provider doesn't support batch processing, falling back to sequential...")
             responses = []
-            for i, prompt in enumerate(prompts):
+            iterator = tqdm(prompts, desc="Generating instructions", unit="component") if show_progress else prompts
+            for prompt in iterator:
                 try:
                     response = self.llm.generate(prompt)
                     responses.append(response)
-                    if show_progress and (i + 1) % batch_size == 0:
-                        print(f"  {i + 1}/{len(prompts)} completed")
                 except Exception as e:
-                    print(f"Warning: Generation failed for component {i}: {e}")
+                    if show_progress:
+                        tqdm.write(f"Warning: Generation failed: {e}")
                     responses.append("")
         
         # Parse responses
-        for i, (response, component_type) in enumerate(zip(responses, component_types)):
+        iterator = tqdm(
+            zip(responses, component_types),
+            total=len(responses),
+            desc="Parsing responses",
+            unit="response"
+        ) if show_progress else zip(responses, component_types)
+        
+        for response, component_type in iterator:
             try:
                 instructions = self._parse_response(response)
                 if not instructions:
                     instructions = [self._generate_fallback_instruction(component_type)]
             except Exception as e:
-                print(f"Warning: Failed to parse response for component {i}: {e}")
+                if show_progress:
+                    tqdm.write(f"Warning: Failed to parse response: {e}")
                 instructions = [self._generate_fallback_instruction(component_type)]
             
             all_results.append(instructions)
