@@ -43,14 +43,20 @@ DEFAULT_SYSTEM_PROMPT = """당신은 HTML/CSS UI 전문가입니다. 사용자�
 - 접근성(a11y)을 고려합니다
 - 깔끔하고 유지보수하기 쉬운 코드를 작성합니다"""
 
-INSTRUCTION_GENERATION_PROMPT_KO = """다음 HTML 코드를 보고, 이 HTML을 만들어달라고 요청하는 자연스러운 한국어 문장을 {num_instructions}개 생성해주세요.
+INSTRUCTION_GENERATION_PROMPT_KO = """다음 HTML 코드를 보고, 이 화면/기능을 만들어달라고 요청하는 자연스러운 한국어 문장을 {num_instructions}개 생성해주세요.
 
-요청문은 다양한 스타일로 작성해주세요:
-- 간단한 요청 (예: "로그인 폼 만들어줘")
-- 상세한 요청 (예: "이메일과 비밀번호 입력 필드가 있는 로그인 폼을 만들어줘")
-- 기능 중심 요청 (예: "사용자 인증을 위한 로그인 화면이 필요해")
+**중요: 요청자는 개발자가 아닌 비즈니스 팀 직원입니다.**
+- 도메인/업무에 대해서는 잘 알지만, 개발 용어는 잘 모릅니다
+- "폼", "컴포넌트", "필드", "인풋" 같은 개발 용어 대신 일상적인 표현을 사용하세요
+- 업무 목적이나 사용자 관점에서 요청하는 것처럼 작성하세요
 
-컴포넌트 유형: {component_type}
+요청문 스타일 예시:
+- 간단한 요청: "로그인 화면 만들어줘", "상품 목록 페이지 필요해"
+- 상세한 요청: "이메일이랑 비밀번호 입력하는 로그인 화면 만들어줘"
+- 업무 관점 요청: "고객이 로그인할 수 있는 화면이 필요해", "주문 내역을 확인할 수 있는 페이지"
+- 기능 설명 요청: "회원가입하고 나서 로그인하는 창", "검색 결과 보여주는 화면"
+
+화면 유형: {component_type}
 
 HTML 코드:
 ```html
@@ -60,14 +66,20 @@ HTML 코드:
 JSON 배열 형식으로만 응답해주세요. 다른 설명은 필요 없습니다:
 ["요청문1", "요청문2", "요청문3"]"""
 
-INSTRUCTION_GENERATION_PROMPT_EN = """Look at the following HTML code and generate {num_instructions} natural language instructions that would request creating this HTML.
+INSTRUCTION_GENERATION_PROMPT_EN = """Look at the following HTML code and generate {num_instructions} natural language instructions that would request creating this screen/feature.
 
-Write instructions in various styles:
-- Simple requests (e.g., "Create a login form")
-- Detailed requests (e.g., "Create a login form with email and password input fields")
-- Function-focused requests (e.g., "I need a login screen for user authentication")
+**Important: The requester is a business team member, NOT a developer.**
+- They understand the business domain well, but are not familiar with technical terms
+- Avoid developer jargon like "form", "component", "field", "input" - use everyday language instead
+- Write requests from a business purpose or end-user perspective
 
-Component type: {component_type}
+Example request styles:
+- Simple: "Make a login screen", "I need a product list page"
+- Detailed: "Create a login screen where users enter their email and password"
+- Business-focused: "I need a page where customers can log in", "A page to view order history"
+- Feature description: "A screen for signing up and then logging in", "Show search results on a page"
+
+Screen type: {component_type}
 
 HTML code:
 ```html
@@ -78,24 +90,34 @@ Respond only in JSON array format. No other explanation needed:
 ["instruction1", "instruction2", "instruction3"]"""
 
 # Batch prompt templates (multiple components in one prompt)
-BATCH_INSTRUCTION_PROMPT_KO = """다음 {num_components}개의 HTML 코드 각각에 대해, 해당 HTML을 만들어달라고 요청하는 자연스러운 한국어 문장을 {num_instructions}개씩 생성해주세요.
+BATCH_INSTRUCTION_PROMPT_KO = """다음 {num_components}개의 HTML 코드 각각에 대해, 해당 화면/기능을 만들어달라고 요청하는 자연스러운 한국어 문장을 {num_instructions}개씩 생성해주세요.
 
-요청문은 다양한 스타일로 작성해주세요:
-- 간단한 요청 (예: "로그인 폼 만들어줘")
-- 상세한 요청 (예: "이메일과 비밀번호 입력 필드가 있는 로그인 폼을 만들어줘")
-- 기능 중심 요청 (예: "사용자 인증을 위한 로그인 화면이 필요해")
+**중요: 요청자는 개발자가 아닌 비즈니스 팀 직원입니다.**
+- 도메인/업무에 대해서는 잘 알지만, 개발 용어는 잘 모릅니다
+- "폼", "컴포넌트", "필드", "인풋" 같은 개발 용어 대신 일상적인 표현을 사용하세요
+- 업무 목적이나 사용자 관점에서 요청하는 것처럼 작성하세요
+
+요청문 스타일 예시:
+- 간단한 요청: "로그인 화면 만들어줘", "상품 목록 페이지 필요해"
+- 상세한 요청: "이메일이랑 비밀번호 입력하는 로그인 화면 만들어줘"
+- 업무 관점 요청: "고객이 로그인할 수 있는 화면이 필요해", "주문 내역을 확인할 수 있는 페이지"
 
 {components_section}
 
 JSON 객체 형식으로만 응답해주세요. 키는 컴포넌트 번호(문자열), 값은 요청문 배열입니다:
 {{"1": ["요청문1", "요청문2", "요청문3"], "2": ["요청문1", "요청문2", "요청문3"], ...}}"""
 
-BATCH_INSTRUCTION_PROMPT_EN = """For each of the following {num_components} HTML codes, generate {num_instructions} natural language instructions that would request creating that HTML.
+BATCH_INSTRUCTION_PROMPT_EN = """For each of the following {num_components} HTML codes, generate {num_instructions} natural language instructions that would request creating that screen/feature.
 
-Write instructions in various styles:
-- Simple requests (e.g., "Create a login form")
-- Detailed requests (e.g., "Create a login form with email and password input fields")
-- Function-focused requests (e.g., "I need a login screen for user authentication")
+**Important: The requester is a business team member, NOT a developer.**
+- They understand the business domain well, but are not familiar with technical terms
+- Avoid developer jargon like "form", "component", "field", "input" - use everyday language instead
+- Write requests from a business purpose or end-user perspective
+
+Example request styles:
+- Simple: "Make a login screen", "I need a product list page"
+- Detailed: "Create a login screen where users enter their email and password"
+- Business-focused: "I need a page where customers can log in", "A page to view order history"
 
 {components_section}
 
@@ -261,12 +283,24 @@ class InstructionGenerator:
             BATCH_INSTRUCTION_PROMPT_KO if language == 'ko'
             else BATCH_INSTRUCTION_PROMPT_EN
         )
+        
+        # Map technical types to user-friendly names (for prompts)
+        self.type_display_map = {
+            'page': '전체 페이지' if language == 'ko' else 'Full page',
+            'section': '화면 영역' if language == 'ko' else 'Screen section',
+            'component': '화면 요소' if language == 'ko' else 'UI element'
+        }
+    
+    def _get_display_type(self, component_type: str) -> str:
+        """Convert technical component type to user-friendly display name"""
+        return self.type_display_map.get(component_type, '화면' if self.language == 'ko' else 'Screen')
     
     def generate(self, html_content: str, component_type: str) -> list[str]:
         """Generate instructions for the given HTML content"""
+        display_type = self._get_display_type(component_type)
         prompt = self.prompt_template.format(
             html_content=html_content[:5000],  # Truncate long content
-            component_type=component_type,
+            component_type=display_type,
             num_instructions=self.num_instructions
         )
         
@@ -285,10 +319,14 @@ class InstructionGenerator:
     
     def _build_batch_prompt(self, components: list[dict]) -> str:
         """Build a single prompt containing multiple components"""
+        screen_label = "화면" if self.language == 'ko' else "Screen"
+        type_label = "화면 유형" if self.language == 'ko' else "Screen type"
+        
         sections = []
         for i, component in enumerate(components, 1):
-            section = f"""[컴포넌트 {i}]
-컴포넌트 유형: {component['type']}
+            display_type = self._get_display_type(component['type'])
+            section = f"""[{screen_label} {i}]
+{type_label}: {display_type}
 HTML 코드:
 ```html
 {component['content'][:3000]}
@@ -502,16 +540,21 @@ HTML 코드:
         return cleaned
     
     def _generate_fallback_instruction(self, component_type: str) -> str:
-        """Generate a simple fallback instruction"""
+        """Generate a simple fallback instruction (user-friendly, non-technical)"""
         if self.language == 'ko':
             type_map = {
-                'page': '페이지',
-                'section': '섹션',
-                'component': '컴포넌트'
+                'page': '이 페이지',
+                'section': '이 화면 영역',
+                'component': '이 화면'
             }
-            return f"{type_map.get(component_type, '컴포넌트')}를 만들어줘"
+            return f"{type_map.get(component_type, '이 화면')} 만들어줘"
         else:
-            return f"Create a {component_type}"
+            type_map = {
+                'page': 'this page',
+                'section': 'this section',
+                'component': 'this screen'
+            }
+            return f"Create {type_map.get(component_type, 'this screen')}"
 
 
 # ============================================
