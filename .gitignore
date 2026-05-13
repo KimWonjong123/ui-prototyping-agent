@@ -1,0 +1,38 @@
+# Dependencies
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data (keep structure, ignore contents)
+data/raw_html/*
+data/extracted/*
+data/training/*
+!data/raw_html/.gitkeep
+!data/extracted/.gitkeep
+!data/training/.gitkeep
+!data/raw_html/sample_*.html
+
+# Models
+models/*
+!models/.gitkeep
+*.gguf
+*.bin
+
+# OS
+.DS_Store
+Thumbs.db
