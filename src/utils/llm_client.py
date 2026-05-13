@@ -2,8 +2,11 @@
 LLM Client module supporting multiple providers (Gemini, Ollama)
 """
 import os
+import math
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
+from tqdm import tqdm
 
 from dotenv import load_dotenv
 
@@ -68,16 +71,61 @@ class GeminiClient(LLMClient):
         except Exception as e:
             raise RuntimeError(f"Gemini generation failed: {e}")
     
-    def generate_batch(self, prompts: list[str], system_prompt: Optional[str] = None, batch_size: int = 4) -> list[str]:
-        """Generate responses for multiple prompts (sequential for Gemini API)"""
-        results = []
-        for prompt in tqdm(prompts, desc="Gemini batch inference", unit="prompt"):
+    def generate_batch(
+        self,
+        prompts: list[str],
+        system_prompt: Optional[str] = None,
+        num_workers: int = 4,
+        batch_size: Optional[int] = None  # Deprecated, use num_workers
+    ) -> list[str]:
+        """
+        Generate responses for multiple prompts in PARALLEL.
+        
+        Args:
+            prompts: List of prompts to generate responses for
+            system_prompt: Optional system prompt to include in each request
+            num_workers: Number of concurrent requests (threads) to run in parallel
+            batch_size: Deprecated, use num_workers instead
+        
+        Returns:
+            List of generated responses in the same order as input prompts
+        """
+        # Handle deprecated batch_size parameter
+        workers = batch_size if batch_size is not None else num_workers
+        if workers < 1:
+            raise ValueError("num_workers must be >= 1")
+
+        total_prompts = len(prompts)
+        if total_prompts == 0:
+            return []
+        
+        # Pre-allocate results list to maintain order
+        results = [""] * total_prompts
+        
+        def process_single(idx: int, prompt: str) -> tuple[int, str]:
+            """Process a single prompt and return (index, result)"""
             try:
                 result = self.generate(prompt, system_prompt)
-                results.append(result)
+                return (idx, result)
             except Exception as e:
-                tqdm.write(f"Warning: Gemini batch generation failed: {e}")
-                results.append("")
+                tqdm.write(f"Warning: Gemini generation failed for prompt {idx}: {e}")
+                return (idx, "")
+        
+        # Use ThreadPoolExecutor for true parallel execution
+        with tqdm(total=total_prompts, desc=f"Gemini parallel inference (workers={workers})", unit="prompt") as pbar:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                # Submit all tasks
+                futures = {
+                    executor.submit(process_single, idx, prompt): idx 
+                    for idx, prompt in enumerate(prompts)
+                }
+                
+                # Collect results as they complete
+                for future in as_completed(futures):
+                    idx, result = future.result()
+                    results[idx] = result
+                    pbar.update(1)
+
         return results
     
     def is_available(self) -> bool:
@@ -137,28 +185,62 @@ class OllamaClient(LLMClient):
         except Exception as e:
             raise RuntimeError(f"Ollama generation failed: {e}")
     
-    def generate_batch(self, prompts: list[str], system_prompt: Optional[str] = None, batch_size: int = 4) -> list[str]:
+    def generate_batch(
+        self,
+        prompts: list[str],
+        system_prompt: Optional[str] = None,
+        num_workers: int = 4,
+        batch_size: Optional[int] = None  # Deprecated, use num_workers
+    ) -> list[str]:
         """
-        Generate responses for multiple prompts in batches
+        Generate responses for multiple prompts in PARALLEL.
         
         Args:
             prompts: List of prompts to generate responses for
             system_prompt: Optional system prompt to include in each request
-            batch_size: Number of prompts to process sequentially before yielding control
-                       (for CPU-only Ollama, sequential processing is more stable)
+            num_workers: Number of concurrent requests (threads) to run in parallel
+                        NOTE: Ollama server must support parallel requests.
+                        Set OLLAMA_NUM_PARALLEL env var on server side to match.
+            batch_size: Deprecated, use num_workers instead
         
         Returns:
             List of generated responses in the same order as input prompts
         """
-        results = []
+        # Handle deprecated batch_size parameter
+        workers = batch_size if batch_size is not None else num_workers
+        if workers < 1:
+            raise ValueError("num_workers must be >= 1")
+
+        total_prompts = len(prompts)
+        if total_prompts == 0:
+            return []
         
-        for prompt in tqdm(prompts, desc="Ollama batch inference", unit="prompt"):
+        # Pre-allocate results list to maintain order
+        results = [""] * total_prompts
+        
+        def process_single(idx: int, prompt: str) -> tuple[int, str]:
+            """Process a single prompt and return (index, result)"""
             try:
                 result = self.generate(prompt, system_prompt)
-                results.append(result)
+                return (idx, result)
             except Exception as e:
-                tqdm.write(f"Warning: Ollama batch generation failed: {e}")
-                results.append("")
+                tqdm.write(f"Warning: Ollama generation failed for prompt {idx}: {e}")
+                return (idx, "")
+        
+        # Use ThreadPoolExecutor for true parallel execution
+        with tqdm(total=total_prompts, desc=f"Ollama parallel inference (workers={workers})", unit="prompt") as pbar:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                # Submit all tasks
+                futures = {
+                    executor.submit(process_single, idx, prompt): idx 
+                    for idx, prompt in enumerate(prompts)
+                }
+                
+                # Collect results as they complete
+                for future in as_completed(futures):
+                    idx, result = future.result()
+                    results[idx] = result
+                    pbar.update(1)
         
         return results
     

@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -75,6 +76,31 @@ HTML code:
 
 Respond only in JSON array format. No other explanation needed:
 ["instruction1", "instruction2", "instruction3"]"""
+
+# Batch prompt templates (multiple components in one prompt)
+BATCH_INSTRUCTION_PROMPT_KO = """다음 {num_components}개의 HTML 코드 각각에 대해, 해당 HTML을 만들어달라고 요청하는 자연스러운 한국어 문장을 {num_instructions}개씩 생성해주세요.
+
+요청문은 다양한 스타일로 작성해주세요:
+- 간단한 요청 (예: "로그인 폼 만들어줘")
+- 상세한 요청 (예: "이메일과 비밀번호 입력 필드가 있는 로그인 폼을 만들어줘")
+- 기능 중심 요청 (예: "사용자 인증을 위한 로그인 화면이 필요해")
+
+{components_section}
+
+JSON 객체 형식으로만 응답해주세요. 키는 컴포넌트 번호(문자열), 값은 요청문 배열입니다:
+{{"1": ["요청문1", "요청문2", "요청문3"], "2": ["요청문1", "요청문2", "요청문3"], ...}}"""
+
+BATCH_INSTRUCTION_PROMPT_EN = """For each of the following {num_components} HTML codes, generate {num_instructions} natural language instructions that would request creating that HTML.
+
+Write instructions in various styles:
+- Simple requests (e.g., "Create a login form")
+- Detailed requests (e.g., "Create a login form with email and password input fields")
+- Function-focused requests (e.g., "I need a login screen for user authentication")
+
+{components_section}
+
+Respond only in JSON object format. Keys are component numbers (strings), values are instruction arrays:
+{{"1": ["instruction1", "instruction2", "instruction3"], "2": ["instruction1", "instruction2", "instruction3"], ...}}"""
 
 
 # ============================================
@@ -225,9 +251,15 @@ class InstructionGenerator:
         self.language = language
         self.num_instructions = num_instructions
         
+        # Single-component prompt template
         self.prompt_template = (
             INSTRUCTION_GENERATION_PROMPT_KO if language == 'ko'
             else INSTRUCTION_GENERATION_PROMPT_EN
+        )
+        # Multi-component batch prompt template
+        self.batch_prompt_template = (
+            BATCH_INSTRUCTION_PROMPT_KO if language == 'ko'
+            else BATCH_INSTRUCTION_PROMPT_EN
         )
     
     def generate(self, html_content: str, component_type: str) -> list[str]:
@@ -240,7 +272,7 @@ class InstructionGenerator:
         
         try:
             response = self.llm.generate(prompt)
-            instructions = self._parse_response(response)
+            instructions = self._parse_single_response(response)
             
             if not instructions:
                 # Fallback: generate simple instruction from component type
@@ -251,23 +283,120 @@ class InstructionGenerator:
             print(f"Warning: LLM generation failed: {e}")
             return [self._generate_fallback_instruction(component_type)]
     
+    def _build_batch_prompt(self, components: list[dict]) -> str:
+        """Build a single prompt containing multiple components"""
+        sections = []
+        for i, component in enumerate(components, 1):
+            section = f"""[컴포넌트 {i}]
+컴포넌트 유형: {component['type']}
+HTML 코드:
+```html
+{component['content'][:3000]}
+```"""
+            sections.append(section)
+        
+        components_section = "\n\n".join(sections)
+        
+        return self.batch_prompt_template.format(
+            num_components=len(components),
+            num_instructions=self.num_instructions,
+            components_section=components_section
+        )
+    
     def generate_batch(
         self,
         components: list[dict],
-        batch_size: int = 4,
+        items_per_prompt: int = 1,
+        num_workers: int = 4,
         show_progress: bool = True
     ) -> list[list[str]]:
         """
-        Generate instructions for multiple components in batches
+        Generate instructions for multiple components.
         
         Args:
             components: List of dicts with 'content' and 'type' keys
-            batch_size: Number of prompts to process between status updates
+            items_per_prompt: Number of components to include in each LLM prompt
+                             (batch prompting - reduces total LLM calls)
+            num_workers: Number of parallel requests to send to LLM simultaneously
+                        (parallel inference - speeds up processing)
             show_progress: Whether to print progress information
         
         Returns:
             List of instruction lists, one per component in the same order
+        
+        Example:
+            - items_per_prompt=4, num_workers=2:
+              Each prompt contains 4 components, 2 prompts run in parallel
+              → 8 components processed "simultaneously"
         """
+        total_components = len(components)
+        if total_components == 0:
+            return []
+        
+        all_results: list[list[str]] = [[] for _ in range(total_components)]
+        
+        if items_per_prompt <= 1:
+            # Single-component mode (original behavior)
+            return self._generate_batch_single_mode(components, num_workers, show_progress)
+        
+        # Multi-component batch mode
+        if show_progress:
+            print(f"Generating instructions for {total_components} components")
+            print(f"  → items_per_prompt={items_per_prompt}, num_workers={num_workers}")
+            print(f"  → Total LLM calls: ~{math.ceil(total_components / items_per_prompt)}")
+        
+        # Group components into batches for each prompt
+        prompts = []
+        batch_indices = []  # Track which component indices are in each prompt
+        
+        for start in range(0, total_components, items_per_prompt):
+            batch = components[start:start + items_per_prompt]
+            indices = list(range(start, min(start + len(batch), total_components)))
+            
+            prompt = self._build_batch_prompt(batch)
+            prompts.append(prompt)
+            batch_indices.append((indices, [c['type'] for c in batch]))
+        
+        # Run parallel inference
+        try:
+            responses = self.llm.generate_batch(prompts, num_workers=num_workers)
+        except TypeError:
+            # Fallback if num_workers not supported (use batch_size param)
+            responses = self.llm.generate_batch(prompts, batch_size=num_workers)
+        
+        # Parse batch responses
+        if show_progress:
+            batch_iter = tqdm(
+                zip(responses, batch_indices),
+                total=len(responses),
+                desc="Parsing batch responses",
+                unit="batch"
+            )
+        else:
+            batch_iter = zip(responses, batch_indices)
+        
+        for response, (indices, types) in batch_iter:
+            parsed = self._parse_batch_response(response, len(indices))
+            
+            for i, (idx, comp_type) in enumerate(zip(indices, types)):
+                key = str(i + 1)
+                if key in parsed and parsed[key]:
+                    all_results[idx] = parsed[key]
+                else:
+                    all_results[idx] = [self._generate_fallback_instruction(comp_type)]
+        
+        if show_progress:
+            print(f"✓ Generated {len(all_results)} instruction sets")
+        
+        return all_results
+    
+    def _generate_batch_single_mode(
+        self,
+        components: list[dict],
+        num_workers: int,
+        show_progress: bool
+    ) -> list[list[str]]:
+        """Generate with one component per prompt (original mode)"""
         all_results = []
         
         # Build all prompts first
@@ -283,25 +412,13 @@ class InstructionGenerator:
             component_types.append(component['type'])
         
         if show_progress:
-            print(f"Generating instructions for {len(prompts)} components (batch size: {batch_size})")
+            print(f"Generating instructions for {len(prompts)} components (num_workers={num_workers})")
         
-        # Use LLM's batch method if available, otherwise fall back to sequential
+        # Use LLM's batch method
         try:
-            responses = self.llm.generate_batch(prompts, batch_size=batch_size)
-        except (AttributeError, NotImplementedError):
-            # Fallback for LLM clients that don't support batch
-            if show_progress:
-                print("LLM provider doesn't support batch processing, falling back to sequential...")
-            responses = []
-            iterator = tqdm(prompts, desc="Generating instructions", unit="component") if show_progress else prompts
-            for prompt in iterator:
-                try:
-                    response = self.llm.generate(prompt)
-                    responses.append(response)
-                except Exception as e:
-                    if show_progress:
-                        tqdm.write(f"Warning: Generation failed: {e}")
-                    responses.append("")
+            responses = self.llm.generate_batch(prompts, num_workers=num_workers)
+        except TypeError:
+            responses = self.llm.generate_batch(prompts, batch_size=num_workers)
         
         # Parse responses
         iterator = tqdm(
@@ -313,7 +430,7 @@ class InstructionGenerator:
         
         for response, component_type in iterator:
             try:
-                instructions = self._parse_response(response)
+                instructions = self._parse_single_response(response)
                 if not instructions:
                     instructions = [self._generate_fallback_instruction(component_type)]
             except Exception as e:
@@ -328,8 +445,8 @@ class InstructionGenerator:
         
         return all_results
     
-    def _parse_response(self, response: str) -> list[str]:
-        """Parse JSON array from LLM response"""
+    def _parse_single_response(self, response: str) -> list[str]:
+        """Parse JSON array from single-component LLM response"""
         # Try to extract JSON array from response
         try:
             # Find JSON array in response
@@ -348,6 +465,41 @@ class InstructionGenerator:
             pass
         
         return []
+    
+    def _parse_batch_response(self, response: str, expected_count: int) -> dict[str, list[str]]:
+        """Parse JSON object from batch LLM response"""
+        result = {}
+        
+        # Try to extract JSON object from response
+        try:
+            # Find JSON object in response
+            match = re.search(r'\{.*\}', response, re.DOTALL)
+            if match:
+                parsed = json.loads(match.group())
+                if isinstance(parsed, dict):
+                    result = parsed
+        except json.JSONDecodeError:
+            pass
+        
+        # Try parsing entire response as JSON
+        if not result:
+            try:
+                parsed = json.loads(response)
+                if isinstance(parsed, dict):
+                    result = parsed
+            except json.JSONDecodeError:
+                pass
+        
+        # Validate and clean result
+        cleaned = {}
+        for i in range(1, expected_count + 1):
+            key = str(i)
+            if key in result and isinstance(result[key], list):
+                cleaned[key] = result[key]
+            else:
+                cleaned[key] = []
+        
+        return cleaned
     
     def _generate_fallback_instruction(self, component_type: str) -> str:
         """Generate a simple fallback instruction"""
@@ -410,13 +562,15 @@ class TrainingDataPipeline:
         min_html_length: int = 50,
         max_html_length: int = 10000,
         extract_categories: list[str] = None,
-        batch_size: int = 4
+        items_per_prompt: int = 1,
+        num_workers: int = 4
     ):
         self.extractor = HTMLExtractor(min_html_length, max_html_length)
         self.instruction_gen = InstructionGenerator(llm_client, language, num_instructions)
         self.builder = TrainingDataBuilder()
         self.extract_categories = extract_categories or ['page', 'section', 'component']
-        self.batch_size = batch_size
+        self.items_per_prompt = items_per_prompt
+        self.num_workers = num_workers
     
     def process_directory(
         self,
@@ -468,11 +622,12 @@ class TrainingDataPipeline:
         
         # Generate instructions and build training data using batch processing
         print(f"\nGenerating instructions for {len(all_components)} components...")
-        print(f"Batch size: {self.batch_size}")
+        print(f"  → items_per_prompt={self.items_per_prompt}, num_workers={self.num_workers}")
         
         all_instruction_sets = self.instruction_gen.generate_batch(
             all_components,
-            batch_size=self.batch_size,
+            items_per_prompt=self.items_per_prompt,
+            num_workers=self.num_workers,
             show_progress=True
         )
         
@@ -611,10 +766,25 @@ def main():
     )
     
     parser.add_argument(
+        '--items-per-prompt',
+        type=int,
+        default=None,
+        help='Number of components to include in each LLM prompt (batch prompting, default: 1)'
+    )
+    
+    parser.add_argument(
+        '--num-workers', '-w',
+        type=int,
+        default=None,
+        help='Number of parallel LLM requests (default: 4)'
+    )
+    
+    # Deprecated, kept for backward compatibility
+    parser.add_argument(
         '--batch-size', '-b',
         type=int,
         default=None,
-        help='Batch size for LLM inference (default: 4)'
+        help='[Deprecated] Use --num-workers instead'
     )
     
     parser.add_argument(
@@ -630,7 +800,13 @@ def main():
     num_instructions = args.num_instructions or int(os.getenv('NUM_INSTRUCTIONS_PER_COMPONENT', '3'))
     min_html = int(os.getenv('MIN_HTML_LENGTH', '50'))
     max_html = int(os.getenv('MAX_HTML_LENGTH', '10000'))
-    batch_size = args.batch_size or int(os.getenv('BATCH_SIZE', '4'))
+    
+    # Handle new parameters with backward compatibility
+    items_per_prompt = args.items_per_prompt or int(os.getenv('ITEMS_PER_PROMPT', '1'))
+    num_workers = args.num_workers or args.batch_size or int(os.getenv('NUM_WORKERS', '4'))
+    
+    if args.batch_size:
+        print("Warning: --batch-size is deprecated, use --num-workers instead")
     
     categories = None
     if args.categories:
@@ -682,7 +858,8 @@ def main():
         min_html_length=min_html,
         max_html_length=max_html,
         extract_categories=categories,
-        batch_size=batch_size
+        items_per_prompt=items_per_prompt,
+        num_workers=num_workers
     )
     
     pipeline.process_directory(args.input, args.output)
