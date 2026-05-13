@@ -251,6 +251,75 @@ class InstructionGenerator:
             print(f"Warning: LLM generation failed: {e}")
             return [self._generate_fallback_instruction(component_type)]
     
+    def generate_batch(
+        self,
+        components: list[dict],
+        batch_size: int = 4,
+        show_progress: bool = True
+    ) -> list[list[str]]:
+        """
+        Generate instructions for multiple components in batches
+        
+        Args:
+            components: List of dicts with 'content' and 'type' keys
+            batch_size: Number of prompts to process between status updates
+            show_progress: Whether to print progress information
+        
+        Returns:
+            List of instruction lists, one per component in the same order
+        """
+        all_results = []
+        
+        # Build all prompts first
+        prompts = []
+        component_types = []
+        for component in components:
+            prompt = self.prompt_template.format(
+                html_content=component['content'][:5000],
+                component_type=component['type'],
+                num_instructions=self.num_instructions
+            )
+            prompts.append(prompt)
+            component_types.append(component['type'])
+        
+        if show_progress:
+            print(f"Generating instructions for {len(prompts)} components (batch size: {batch_size})")
+        
+        # Use LLM's batch method if available, otherwise fall back to sequential
+        try:
+            responses = self.llm.generate_batch(prompts, batch_size=batch_size)
+        except (AttributeError, NotImplementedError):
+            # Fallback for LLM clients that don't support batch
+            if show_progress:
+                print("LLM provider doesn't support batch processing, falling back to sequential...")
+            responses = []
+            for i, prompt in enumerate(prompts):
+                try:
+                    response = self.llm.generate(prompt)
+                    responses.append(response)
+                    if show_progress and (i + 1) % batch_size == 0:
+                        print(f"  {i + 1}/{len(prompts)} completed")
+                except Exception as e:
+                    print(f"Warning: Generation failed for component {i}: {e}")
+                    responses.append("")
+        
+        # Parse responses
+        for i, (response, component_type) in enumerate(zip(responses, component_types)):
+            try:
+                instructions = self._parse_response(response)
+                if not instructions:
+                    instructions = [self._generate_fallback_instruction(component_type)]
+            except Exception as e:
+                print(f"Warning: Failed to parse response for component {i}: {e}")
+                instructions = [self._generate_fallback_instruction(component_type)]
+            
+            all_results.append(instructions)
+        
+        if show_progress:
+            print(f"✓ Generated {len(all_results)} instruction sets")
+        
+        return all_results
+    
     def _parse_response(self, response: str) -> list[str]:
         """Parse JSON array from LLM response"""
         # Try to extract JSON array from response
@@ -332,12 +401,14 @@ class TrainingDataPipeline:
         num_instructions: int = 3,
         min_html_length: int = 50,
         max_html_length: int = 10000,
-        extract_categories: list[str] = None
+        extract_categories: list[str] = None,
+        batch_size: int = 4
     ):
         self.extractor = HTMLExtractor(min_html_length, max_html_length)
         self.instruction_gen = InstructionGenerator(llm_client, language, num_instructions)
         self.builder = TrainingDataBuilder()
         self.extract_categories = extract_categories or ['page', 'section', 'component']
+        self.batch_size = batch_size
     
     def process_directory(
         self,
@@ -387,15 +458,22 @@ class TrainingDataPipeline:
                 json.dump(all_components, f, ensure_ascii=False, indent=2)
             print(f"Saved extracted components to {extracted_path}")
         
-        # Generate instructions and build training data
-        training_data = []
+        # Generate instructions and build training data using batch processing
+        print(f"\nGenerating instructions for {len(all_components)} components...")
+        print(f"Batch size: {self.batch_size}")
         
-        for component in tqdm(all_components, desc="Generating instructions"):
-            instructions = self.instruction_gen.generate(
-                component['content'],
-                component['type']
-            )
-            
+        all_instruction_sets = self.instruction_gen.generate_batch(
+            all_components,
+            batch_size=self.batch_size,
+            show_progress=True
+        )
+        
+        training_data = []
+        for component, instructions in tqdm(
+            zip(all_components, all_instruction_sets),
+            total=len(all_components),
+            desc="Building training examples"
+        ):
             for instruction in instructions:
                 example = self.builder.build(
                     instruction=instruction,
@@ -525,6 +603,13 @@ def main():
     )
     
     parser.add_argument(
+        '--batch-size', '-b',
+        type=int,
+        default=None,
+        help='Batch size for LLM inference (default: 4)'
+    )
+    
+    parser.add_argument(
         '--test',
         action='store_true',
         help='Test LLM connection and exit'
@@ -537,6 +622,7 @@ def main():
     num_instructions = args.num_instructions or int(os.getenv('NUM_INSTRUCTIONS_PER_COMPONENT', '3'))
     min_html = int(os.getenv('MIN_HTML_LENGTH', '50'))
     max_html = int(os.getenv('MAX_HTML_LENGTH', '10000'))
+    batch_size = args.batch_size or int(os.getenv('BATCH_SIZE', '4'))
     
     categories = None
     if args.categories:
@@ -587,7 +673,8 @@ def main():
         num_instructions=num_instructions,
         min_html_length=min_html,
         max_html_length=max_html,
-        extract_categories=categories
+        extract_categories=categories,
+        batch_size=batch_size
     )
     
     pipeline.process_directory(args.input, args.output)

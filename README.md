@@ -68,6 +68,33 @@ python scripts/generate_training_data.py \
     --num-instructions 3
 ```
 
+### 5. 배치 처리로 빠르게! (선택)
+
+**ollama 추론이 느리면 배치 처리를 사용하세요:**
+
+```bash
+# 배치 사이즈 지정으로 더 빠르게
+python scripts/generate_training_data.py \
+    --batch-size 8 \
+    --input data/raw_html \
+    --output data/training
+
+# 배치 처리 유틸리티 사용 (더 세밀한 제어)
+python scripts/batch_inference.py \
+    --input data/extracted_components.json \
+    --batch-size 8 \
+    --output results.json
+
+# 벤치마크로 최적 배치 사이즈 찾기
+python scripts/batch_inference.py --benchmark --batch-size 4 --num-items 100
+```
+
+**배치 사이즈 가이드:**
+- `--batch-size 1`: 느림 (하나씩 처리)
+- `--batch-size 4`: 권장 (기본값, 균형잡힘)
+- `--batch-size 8-16`: 빠름 (메모리 넉넉할 때)
+- `--batch-size 32+`: 매우 빠름 (고사양 필요)
+
 ## 📁 프로젝트 구조
 
 ```
@@ -82,11 +109,12 @@ ui-prototyping-agent/
 │   └── training/        # 출력: 학습 데이터 (JSON/JSONL)
 │
 ├── scripts/
-│   └── generate_training_data.py  # 메인 스크립트
+│   ├── generate_training_data.py  # 메인 스크립트 (배치 지원)
+│   └── batch_inference.py         # 배치 처리 유틸리티
 │
 └── src/
     └── utils/
-        └── llm_client.py  # LLM 클라이언트 (Gemini/Ollama)
+        └── llm_client.py  # LLM 클라이언트 (Gemini/Ollama + 배치 처리)
 ```
 
 ## 🔧 CLI 옵션
@@ -100,6 +128,7 @@ ui-prototyping-agent/
 | `--language`, `-l` | 생성 언어 (`ko` / `en`) | `ko` |
 | `--num-instructions`, `-n` | 컴포넌트당 instruction 수 | `3` |
 | `--categories`, `-c` | 추출 카테고리 | `page,section,component` |
+| `--batch-size`, `-b` | 배치 처리 크기 (빠른 추론!) | `4` |
 | `--test` | LLM 연결 테스트 | - |
 
 ## 📊 출력 포맷
@@ -125,6 +154,83 @@ ui-prototyping-agent/
 {"messages": [...], "metadata": {...}}
 {"messages": [...], "metadata": {...}}
 ```
+
+## 🚀 배치 처리 (Batch Inference)
+
+**Ollama 추론 속도를 크게 향상시키는 배치 처리 기능입니다!**
+
+### 배치 처리란?
+
+- 여러 프롬프트를 한 번에 LLM에 전송 (네트워크 오버헤드 감소)
+- 로컬 Ollama는 순차 처리하지만, 바뀌는 오버헤드 최소화
+- 결과적으로 시간 단축 (보통 20-40% 빠름)
+
+### 사용 방법
+
+**1. generate_training_data.py에서 배치 처리**
+
+```bash
+# 배치 사이즈 지정
+python scripts/generate_training_data.py --batch-size 8
+
+# 환경 변수로도 설정 가능
+BATCH_SIZE=8 python scripts/generate_training_data.py
+```
+
+**2. batch_inference.py로 더 세밀한 제어**
+
+```bash
+# 추출된 컴포넌트로 배치 처리
+python scripts/batch_inference.py \
+    --input data/extracted_components.json \
+    --batch-size 8 \
+    --output results.json
+
+# JSONL 형식 지원
+python scripts/batch_inference.py \
+    --input components.jsonl \
+    --output results.jsonl \
+    --format jsonl
+
+# 커스텀 프롬프트 배치 처리
+python scripts/batch_inference.py \
+    --prompts prompts.txt \
+    --batch-size 4
+```
+
+**3. 성능 벤치마크**
+
+```bash
+# 최적 배치 사이즈 찾기
+python scripts/batch_inference.py \
+    --benchmark \
+    --num-items 100 \
+    --batch-size 4
+
+# 출력:
+# Benchmark Results
+# ============================================================
+# num_items: 100
+# batch_size: 4
+# total_time_seconds: 42.5000
+# time_per_item_seconds: 0.4250
+# items_per_second: 2.3529
+# prompt_length: 100
+# avg_response_length: 245.5000
+# ============================================================
+```
+
+### 배치 사이즈 권장값
+
+| 배치 사이즈 | 속도 | 메모리 | 추천 상황 |
+|----------|------|--------|---------|
+| 1 | 느림 | 낮음 | 테스트용 |
+| 2-4 | 중간 | 중간 | **기본 권장** |
+| 4-8 | 빠름 | 중간-높음 | 데이터 많을 때 |
+| 8-16 | 매우 빠름 | 높음 | 고사양, 데이터 많음 |
+| 16+ | 초고속 | 매우 높음 | 워크스테이션급 |
+
+> **팁:** 벤치마크로 자신의 시스템 최적값을 찾아서 사용하세요!
 
 ## 🤖 LLM 제공자 설정
 

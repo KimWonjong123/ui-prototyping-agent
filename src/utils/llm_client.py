@@ -20,6 +20,11 @@ class LLMClient(ABC):
         pass
     
     @abstractmethod
+    def generate_batch(self, prompts: list[str], system_prompt: Optional[str] = None, batch_size: int = 4) -> list[str]:
+        """Generate responses for multiple prompts in batches (faster than calling generate multiple times)"""
+        pass
+    
+    @abstractmethod
     def is_available(self) -> bool:
         """Check if the LLM service is available"""
         pass
@@ -62,6 +67,18 @@ class GeminiClient(LLMClient):
             return response.text
         except Exception as e:
             raise RuntimeError(f"Gemini generation failed: {e}")
+    
+    def generate_batch(self, prompts: list[str], system_prompt: Optional[str] = None, batch_size: int = 4) -> list[str]:
+        """Generate responses for multiple prompts (sequential for Gemini API)"""
+        results = []
+        for prompt in prompts:
+            try:
+                result = self.generate(prompt, system_prompt)
+                results.append(result)
+            except Exception as e:
+                print(f"Warning: Gemini batch generation failed for a prompt: {e}")
+                results.append("")
+        return results
     
     def is_available(self) -> bool:
         """Check if Gemini API is available"""
@@ -119,6 +136,36 @@ class OllamaClient(LLMClient):
             return response["message"]["content"]
         except Exception as e:
             raise RuntimeError(f"Ollama generation failed: {e}")
+    
+    def generate_batch(self, prompts: list[str], system_prompt: Optional[str] = None, batch_size: int = 4) -> list[str]:
+        """
+        Generate responses for multiple prompts in batches
+        
+        Args:
+            prompts: List of prompts to generate responses for
+            system_prompt: Optional system prompt to include in each request
+            batch_size: Number of prompts to process sequentially before yielding control
+                       (for CPU-only Ollama, sequential processing is more stable)
+        
+        Returns:
+            List of generated responses in the same order as input prompts
+        """
+        results = []
+        total = len(prompts)
+        
+        for i, prompt in enumerate(prompts):
+            try:
+                result = self.generate(prompt, system_prompt)
+                results.append(result)
+                
+                # Print progress
+                if (i + 1) % batch_size == 0 or (i + 1) == total:
+                    print(f"  Progress: {i + 1}/{total} completed")
+            except Exception as e:
+                print(f"Warning: Ollama batch generation failed for prompt {i}: {e}")
+                results.append("")
+        
+        return results
     
     def is_available(self) -> bool:
         """Check if Ollama server is available and model exists"""
